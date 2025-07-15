@@ -1,5 +1,6 @@
 import telebot
 from telebot import types
+from types import SimpleNamespace
 import sqlite3
 import hashlib
 import g4f
@@ -7,7 +8,7 @@ from datetime import datetime, timedelta, date
 from apscheduler.schedulers.background import BackgroundScheduler
 
 bot = telebot.TeleBot('7265663636:AAFwY5EF08zyVbPKzpTZ0CPBxhs4OiGruj8')
-
+pending_tasks = {}
 MOTIVATIONS = [
     "Учёба — это инвестиция в себя. Чем больше вкладываешь сейчас, тем больше получишь потом!",
     "Даже если идёшь медленно, главное — не останавливайся. Маленькие шаги ведут к большим победам!",
@@ -80,6 +81,35 @@ CREATE TABLE IF NOT EXISTS sleep_prefs (
 )
 ''')
 conn.commit()
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS tasks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    tg_id       INTEGER NOT NULL,
+    description TEXT    NOT NULL,
+    duration    INTEGER NOT NULL,
+    priority    TEXT    NOT NULL,
+    task_date   DATE    NOT NULL,
+    done        INTEGER NOT NULL DEFAULT 0
+)
+''')
+conn.commit()
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS habits (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    tg_id    INTEGER NOT NULL,
+    name     TEXT    NOT NULL
+)
+''')
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS habit_log (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    habit_id  INTEGER NOT NULL,
+    log_date  DATE    NOT NULL,
+    done      INTEGER NOT NULL,
+    UNIQUE(habit_id, log_date)
+)
+''')
+conn.commit()
 
 
 @bot.message_handler(commands=['start'])
@@ -109,7 +139,208 @@ def start(message):
         )
 
 
-@bot.callback_query_handler(func=lambda call: True)
+@bot.callback_query_handler(func=lambda c: c.data.startswith("prio_"))
+def plan_add_prio(call):
+    if call.data == "back":
+        return go_scheduling(call)
+    if not pending_tasks.get(call.from_user.id):
+        return bot.answer_callback_query(call.id, "Что-то пошло не так, попробуй ещё раз.")
+    prio = {
+        "prio_high": "Высокий",
+        "prio_medium": "Средний",
+        "prio_low": "Низкий"
+    }[call.data]
+    desc = pending_tasks.get(call.from_user.id)['desc']
+    dur = pending_tasks.get(call.from_user.id)['duration']
+    cursor.execute(
+        "INSERT INTO tasks (tg_id, description, duration, priority, task_date, done) "
+        "VALUES (?, ?, ?, ?, ?, 0)",
+        (call.from_user.id, desc, dur, prio, date.today().isoformat())
+    )
+    conn.commit()
+    bot.send_message(call.from_user.id, "✅ Задача сохранена!")
+    pending_tasks.pop(call.from_user.id, None)
+    go_scheduling(call)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("complete_"))
+def handle_complete(call):
+    task_id = int(call.data.split("_", 1)[1])
+    tg = call.from_user.id
+    cursor.execute("UPDATE tasks SET done = 1 WHERE id = ?", (task_id,))
+    cursor.execute("UPDATE users SET xp = xp + 10 WHERE tg_id = ?", (tg,))
+    conn.commit()
+    bot.answer_callback_query(call.id, "Задача отмечена как выполненная! +10 XP")
+    show_tasks(call, for_date=date.today())
+
+
+@bot.callback_query_handler(func=lambda c: c.data == 'plan_add')
+def handle_plan_add(call):
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    plan_add_start(call)
+
+
+@bot.callback_query_handler(func=lambda c: c.data == 'plan_list')
+def handle_plan_list(call):
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    plan_list_menu(call)
+
+
+@bot.callback_query_handler(func=lambda c: c.data == 'plan_generate')
+def handle_plan_generate(call):
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    plan_generate_start(call)
+
+
+@bot.callback_query_handler(func=lambda c: c.data == 'gen_tomorrow')
+def handle_gen_tomorrow(call):
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    tomorrow = date.today() + timedelta(days=1)
+    plan_generate(call, fetch_date=date.today(), target_date=tomorrow)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("toggle_habit_"))
+def handle_toggle_habit(call):
+    habit_id = int(call.data.split("_")[2])
+    cursor.execute(
+        "SELECT done FROM habit_log WHERE habit_id = ? AND log_date = ?",
+        (habit_id, date.today().isoformat())
+    )
+    row = cursor.fetchone()
+    if row:
+        new_done = 0 if row[0] else 1
+        cursor.execute(
+            "UPDATE habit_log SET done = ? WHERE habit_id = ? AND log_date = ?",
+            (new_done, habit_id, date.today().isoformat())
+        )
+        cursor.execute(
+            "UPDATE users SET xp = xp + ? WHERE tg_id = ?",
+            (25 if new_done else -25, call.from_user.id)
+        )
+    else:
+        cursor.execute(
+            "INSERT INTO habit_log (habit_id, log_date, done) VALUES (?, ?, 1)",
+            (habit_id, date.today().isoformat())
+        )
+        cursor.execute(
+            "UPDATE users SET xp = xp + 25 WHERE tg_id = ?",
+            (call.from_user.id,)
+        )
+    conn.commit()
+    bot.answer_callback_query(call.id, "✅ Сохранено!")
+    handle_mark_habit(call)
+
+
+@bot.callback_query_handler(func=lambda c: c.data == 'list_today')
+def handle_list_today(call):
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    show_tasks(call, for_date=date.today())
+
+
+@bot.callback_query_handler(func=lambda c: c.data == 'list_tomorrow')
+def handle_list_tomorrow(call):
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    show_tasks(call, for_date=date.today() + timedelta(days=1))
+
+
+def show_tasks(call, for_date: date):
+    cursor.execute(
+        "SELECT id, description, duration, priority, done FROM tasks "
+        "WHERE tg_id = ? AND task_date = ?",
+        (call.from_user.id, for_date.isoformat())
+    )
+    if not cursor.fetchall():
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("⬅ Назад", callback_data="back"))
+        bot.send_message(
+            call.message.chat.id,
+            f"На {for_date.strftime('%d.%m.%Y')} задач нет.",
+            reply_markup=kb
+        )
+        return
+    text = f"📋 Задачи на {for_date.strftime('%d.%m.%Y')}:\n\n"
+    for tid, desc, dur, prio, done in cursor.fetchall():
+        status = "✅" if done else "❌"
+        text += f"{status} [{tid}] {desc} — {dur} мин, {prio}\n"
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    for tid, desc, dur, prio, done in cursor.fetchall():
+        if not done:
+            kb.add(types.InlineKeyboardButton(
+                f"✔️ Завершить #{tid}", callback_data=f"complete_{tid}"
+            ))
+    kb.add(types.InlineKeyboardButton("⬅ Назад", callback_data="back"))
+    bot.send_message(call.message.chat.id, text, reply_markup=kb)
+
+
+@bot.callback_query_handler(func=lambda c: c.data == 'add_habit')
+def handle_add_habit(call):
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    msg = bot.send_message(call.message.chat.id, "Введите название новой привычки:", reply_markup=back_kb)
+    bot.register_next_step_handler(msg, save_habit)
+
+
+def save_habit(message):
+    if message.text == "Назад":
+        return go_habits(message)
+    cursor.execute(
+        "INSERT INTO habits (tg_id, name) VALUES (?, ?)",
+        (message.chat.id, message.text)
+    )
+    conn.commit()
+    bot.send_message(message.chat.id, "✅ Привычка добавлена!")
+    show_habits_menu(SimpleNamespace(message=message))
+
+
+def go_habits(call_or_msg):
+    if hasattr(call_or_msg, 'message'):
+        chat_id = call_or_msg.message.chat.id
+        try:
+            bot.delete_message(chat_id, call_or_msg.message.message_id)
+        except Exception:
+            pass
+    else:
+        chat_id = call_or_msg.chat.id
+    cursor.execute("SELECT id, name FROM habits WHERE tg_id = ?", (chat_id,))
+    rows = cursor.fetchall()
+    text = "🗒 Твои привычки:\n\n"
+    for hid, name in rows:
+        text += f"{hid}. {name}\n"
+    if not rows:
+        text += "_Пока нет ни одной привычки._\n"
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    kb.add(
+        types.InlineKeyboardButton("➕ Добавить привычку", callback_data="add_habit"),
+        types.InlineKeyboardButton("✔️ Отметить привычку", callback_data="mark_habit"),
+        types.InlineKeyboardButton("⬅ Назад", callback_data="back")
+    )
+    bot.send_message(chat_id, text, reply_markup=kb, parse_mode='Markdown')
+
+
+@bot.callback_query_handler(func=lambda c: c.data == 'mark_habit')
+def handle_mark_habit(call):
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    cursor.execute("SELECT id, name FROM habits WHERE tg_id = ?", (call.from_user.id,))
+    if not cursor.fetchall():
+        bot.answer_callback_query(call.id, "У вас нет привычек")
+        return show_habits_menu(call)
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    today_str = date.today().isoformat()
+    for hid, name in cursor.fetchall():
+        cursor.execute(
+            "SELECT done FROM habit_log WHERE habit_id = ? AND log_date = ?",
+            (hid, today_str)
+        )
+        row = cursor.fetchone()
+        btn_text = f"{'✅' if row and row[0] else '❌'} {name}"
+        kb.add(types.InlineKeyboardButton(btn_text, callback_data=f"toggle_habit_{hid}"))
+    kb.add(types.InlineKeyboardButton("⬅ Назад", callback_data="habits"))
+    bot.send_message(call.message.chat.id, "Отметьте привычки на сегодня:", reply_markup=kb)
+
+
+@bot.callback_query_handler(
+    func=lambda call: not call.data.startswith("prio_")
+                      and call.data != 'gen_tomorrow'
+)
 def handle_callback(call):
     bot.delete_message(call.message.chat.id, call.message.message_id)
     if call.data == 'scheduling':
@@ -126,6 +357,16 @@ def handle_callback(call):
         go_leaderboard(call)
     elif call.data == 'sleep_prefs':
         go_sleep_prefs(call)
+    elif call.data == 'plan_add':
+        plan_add_start(call)
+    elif call.data == 'plan_list':
+        plan_list_menu(call)
+    elif call.data == 'habits':
+        go_habits(call)
+    elif call.data == 'plan_generate':
+        plan_generate_start(call)
+    elif call.data == 'gen_tomorrow':
+        plan_generate(call, fetch_date=date.today(), target_date=date.today() + timedelta(days=1))
     elif call.data == 'back':
         start(call.message)
 
@@ -222,16 +463,115 @@ def schedule_user_sleep_reminder(tg_id: int, bedtime: str):
 
 
 def go_scheduling(call):
-    markup = types.InlineKeyboardMarkup()
-    back = types.InlineKeyboardButton('Назад', callback_data='back')
-    markup.row(back)
-    with open('start_photo.jpg', 'rb') as photo:
-        bot.send_photo(
-            chat_id=call.message.chat.id,
-            photo=photo,
-            caption="Планирование",
-            reply_markup=markup
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    kb.add(
+        types.InlineKeyboardButton("➕ Добавить задачу", callback_data="plan_add"),
+        types.InlineKeyboardButton("📋 Задачи (Сегодня/Завтра)", callback_data="plan_list"),
+        types.InlineKeyboardButton("🗓 Генератор плана", callback_data="plan_generate"),
+        types.InlineKeyboardButton("🗒 Привычки", callback_data="habits"),
+        types.InlineKeyboardButton("⬅ Назад", callback_data="back")
+    )
+    bot.send_message(call.message.chat.id, "Раздел «Планирование». Выберите действие:", reply_markup=kb)
+
+
+def plan_add_start(call):
+    msg = bot.send_message(call.message.chat.id, "📝 Введите описание задачи:", reply_markup=back_kb)
+    bot.register_next_step_handler(msg, plan_add_desc)
+
+
+def plan_add_desc(message):
+    if message.text == "Назад":
+        return go_scheduling(message)
+    pending_tasks[message.chat.id] = {'desc': message.text}
+    msg = bot.send_message(
+        message.chat.id,
+        "⏱ Укажите длительность в минутах (числом):",
+        reply_markup=back_kb
+    )
+    bot.register_next_step_handler(msg, plan_add_duration)
+
+
+def plan_add_duration(message):
+    if message.text == "Назад":
+        return go_scheduling(message)
+    try:
+        dur = int(message.text)
+    except:
+        return bot.send_message(message.chat.id, "Введите число минут:", reply_markup=back_kb)
+    pending_tasks[message.chat.id]['duration'] = dur
+    kb = types.InlineKeyboardMarkup()
+    kb.add(
+        types.InlineKeyboardButton("Высокий", callback_data="prio_high"),
+        types.InlineKeyboardButton("Средний", callback_data="prio_medium"),
+        types.InlineKeyboardButton("Низкий", callback_data="prio_low"),
+        types.InlineKeyboardButton("Назад", callback_data="back")
+    )
+    bot.send_message(message.chat.id, "🔺 Выберите приоритет:", reply_markup=kb)
+
+
+def plan_list_menu(call):
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        types.InlineKeyboardButton("📅 Сегодня", callback_data="list_today"),
+        types.InlineKeyboardButton("📅 Завтра", callback_data="list_tomorrow"),
+        types.InlineKeyboardButton("Назад", callback_data="back")
+    )
+    bot.send_message(call.message.chat.id, "Выберите дату задач:", reply_markup=kb)
+
+
+def plan_generate_start(call):
+    if datetime.now().hour >= 21:
+        bot.send_message(call.message.chat.id, "Сейчас поздно составлять план на сегодня — перенести на завтра?",
+                         reply_markup=types.InlineKeyboardMarkup().add(
+                             types.InlineKeyboardButton("Перенести на завтра", callback_data="gen_tomorrow"),
+                             types.InlineKeyboardButton("Назад", callback_data="back")
+                         ))
+    else:
+        plan_generate(call, fetch_date=date.today(), target_date=date.today())
+
+
+def plan_generate(call, fetch_date: date, target_date: date):
+    cursor.execute(
+        "SELECT description, duration, priority FROM tasks "
+        "WHERE tg_id = ? AND task_date = ? AND done = 0",
+        (call.from_user.id, fetch_date.isoformat())
+    )
+    if not cursor.fetchall():
+        bot.send_message(
+            call.message.chat.id,
+            f"На {target_date.strftime('%d.%m.%Y')} нет задач для генерации."
         )
+        return go_scheduling(call)
+    prompt = f"Сделай ежедневный план‑расписание на {target_date.strftime('%d.%m.%Y')} для задач:\n"
+    for desc, dur, prio in cursor.fetchall():
+        prompt += f"- {desc} ({dur} мин), приоритет {prio}\n"
+    prompt += (
+        "\nСоставь его в удобном тайм‑блокинге, начиная с утра. "
+        "Если время уже позднее, перенести задачу на следующий день."
+    )
+    bot.send_chat_action(call.message.chat.id, 'typing')
+    plan_text = g4f.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{'role': 'user', 'content': prompt}]
+    )
+    bot.send_message(call.message.chat.id, plan_text)
+    go_scheduling(call)
+
+
+def show_habits_menu(call):
+    cursor.execute("SELECT id, name FROM habits WHERE tg_id = ?", (call.message.chat.id,))
+    text = "🗒 Твои привычки:\n\n"
+    for hid, name in cursor.fetchall():
+        text += f"{hid}. {name}\n"
+    if not cursor.fetchall():
+        text += "_Пока нет ни одной привычки._\n"
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    kb.add(
+        types.InlineKeyboardButton("➕ Добавить привычку", callback_data="add_habit"),
+        types.InlineKeyboardButton("✔️ Отметить привычку", callback_data="mark_habit"),
+        types.InlineKeyboardButton("⬅ Назад", callback_data="back")
+    )
+    bot.send_message(call.message.chat.id, text, reply_markup=kb, parse_mode='Markdown')
 
 
 def go_health(call):
