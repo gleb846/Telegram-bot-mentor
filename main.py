@@ -545,10 +545,7 @@ def plan_generate(call, fetch_date: date, target_date: date):
         (call.from_user.id, fetch_date.isoformat())
     )
     if not cursor.fetchall():
-        bot.send_message(
-            call.message.chat.id,
-            f"На {target_date.strftime('%d.%m.%Y')} нет задач для генерации."
-        )
+        bot.send_message(call.message.chat.id, f"На {target_date.strftime('%d.%m.%Y')} нет задач для генерации.")
         return go_scheduling(call)
     prompt = f"Сделай ежедневный план‑расписание на {target_date.strftime('%d.%m.%Y')} для задач:\n"
     for desc, dur, prio in cursor.fetchall():
@@ -557,7 +554,7 @@ def plan_generate(call, fetch_date: date, target_date: date):
         "\nСоставь его в удобном тайм‑блокинге, начиная с утра. "
         "Если время уже позднее, перенести задачу на следующий день."
     )
-    bot.send_chat_action(call.message.chat.id, 'typing')
+    placeholder = bot.send_message(call.message.chat.id, "⌛️ ИИ думает над вашим запросом...")
     system = (
         "🗓 Ты – AI‑планировщик. Отвечай ТОЛЬКО по теме тайм‑менеджмента и расписания, "
         "не отклоняйся в другие темы. ⏰ Представь план в формате блок‑тайминга. "
@@ -568,6 +565,7 @@ def plan_generate(call, fetch_date: date, target_date: date):
         {'role': 'user', 'content': prompt}
     ]
     plan_text = g4f.ChatCompletion.create(model="gpt-4", messages=messages)
+    bot.delete_message(call.message.chat.id, placeholder.message_id)
     bot.send_message(call.message.chat.id, plan_text)
     go_scheduling(call)
 
@@ -673,12 +671,16 @@ def handle_health_result(message, sleep, fatigue):
         if not 1 <= mood <= 5:
             raise ValueError
     except:
-        return bot.send_message(message.chat.id, "❗️ Пожалуйста, введи число от 1 до 5 за своё настроение:",
-                                reply_markup=back_kb)
-    bot.send_chat_action(message.chat.id, 'typing')
+        return bot.send_message(
+            message.chat.id,
+            "❗️ Пожалуйста, введи число от 1 до 5 за своё настроение:",
+            reply_markup=back_kb
+        )
+    placeholder = bot.send_message(message.chat.id, "⌛️ ИИ думает над вашими данными...")
     try:
         tips = get_health_tips(sleep, fatigue, mood)
     except Exception as e:
+        bot.delete_message(message.chat.id, placeholder.message_id)
         return bot.send_message(message.chat.id, f"⚠️ Ошибка при получении советов: {e}")
     cursor.execute(
         'INSERT INTO health_checks (tg_id, sleep_rating, fatigue, mood, tips) VALUES (?, ?, ?, ?, ?)',
@@ -686,6 +688,7 @@ def handle_health_result(message, sleep, fatigue):
     )
     cursor.execute('UPDATE users SET xp = xp + 15 WHERE tg_id = ?', (message.chat.id,))
     conn.commit()
+    bot.delete_message(message.chat.id, placeholder.message_id)
     bot.send_message(message.chat.id, "🎉 Отлично, ты заработал 15 XP!")
     bot.send_message(message.chat.id, tips, reply_markup=types.ReplyKeyboardRemove())
     kb = types.InlineKeyboardMarkup(row_width=2)
@@ -714,16 +717,13 @@ def handle_homework_chat(message):
         bot.clear_step_handler_by_chat_id(message.chat.id)
         bot.send_message(message.chat.id, "Сессия «Помощь с ДЗ» завершена.", reply_markup=types.ReplyKeyboardRemove())
         return start(message)
-    bot.send_chat_action(message.chat.id, 'typing')
+    placeholder = bot.send_message(message.chat.id, "⌛️ ИИ думает над вашим запросом...")
     try:
         answer = get_homework_solution(message.text)
     except Exception as e:
+        bot.delete_message(message.chat.id, placeholder.message_id)
         return bot.send_message(message.chat.id, f"⚠️ Ошибка при решении: {e}")
-    cursor.execute(
-        'INSERT INTO homework_history (tg_id, question, answer) VALUES (?, ?, ?)',
-        (message.chat.id, message.text, answer)
-    )
-    conn.commit()
+    bot.delete_message(message.chat.id, placeholder.message_id)
     bot.send_message(message.chat.id, answer, reply_markup=types.ReplyKeyboardRemove())
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     kb.add(types.KeyboardButton('Закончить'))
@@ -749,16 +749,13 @@ def handle_psychologist_chat(message):
         bot.clear_step_handler_by_chat_id(message.chat.id)
         bot.send_message(message.chat.id, "Сессия ИИ‑психолога завершена.", reply_markup=types.ReplyKeyboardRemove())
         return start(message)
-    bot.send_chat_action(message.chat.id, 'typing')
+    placeholder = bot.send_message(message.chat.id, "⌛️ ИИ думает над вашим вопросом...")
     try:
         answer = get_psychologist_reply(message.text)
     except Exception as e:
+        bot.delete_message(message.chat.id, placeholder.message_id)
         return bot.send_message(message.chat.id, f"⚠️ Ошибка ИИ: {e}")
-    cursor.execute(
-        'INSERT INTO psychologist_history (tg_id, question, answer) VALUES (?, ?, ?)',
-        (message.chat.id, message.text, answer)
-    )
-    conn.commit()
+    bot.delete_message(message.chat.id, placeholder.message_id)
     bot.send_message(message.chat.id, answer, reply_markup=types.ReplyKeyboardRemove())
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     kb.add(types.KeyboardButton('Закончить'))
