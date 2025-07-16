@@ -122,19 +122,25 @@ def start(message):
     help_btn = types.InlineKeyboardButton('ИИ-Психолог', callback_data='psychologist')
     level_btn = types.InlineKeyboardButton('XP Game', callback_data='xp_game')
     leaderboard_btn = types.InlineKeyboardButton('Лидеры', callback_data='leaderboard')
-    markup.row(level_btn)
-    markup.row(leaderboard_btn)
     markup.row(scheduling_btn)
     markup.row(lessons_btn)
     markup.row(health_btn, help_btn)
+    markup.row(level_btn, leaderboard_btn)
     with open('start_photo.jpg', 'rb') as photo:
         bot.send_photo(
             chat_id=message.chat.id,
             photo=photo,
-            caption="Привет! Я — твой многофункциональный бот-помощник 🤖\n\n"
-                    "🗓️ «Составить план» — планируй день с помощью ИИ\n📚 «Помощь с ДЗ» — решаем задачи\n"
-                    "❤️ «Здоровье» — советы по самочувствию\n🧠 «ИИ‑психолог» — поддержка и советы\n"
-                    "🎮 «XP Game» — прокачивай себя и получай XP\n\nВыбери кнопку и вперед! 🚀",
+            caption=(
+                "Добро пожаловать! Я помогу тебе организовать день, следить за здоровьем, получать поддержку и развиваться\n\n"
+                "<b>• Составить план</b> — ежедневное расписание и задачи\n"
+                "<b>• Помощь с ДЗ</b> — помощь с учебными вопросами\n"
+                "<b>• Здоровье</b> — рекомендации по самочувствию\n"
+                "<b>• ИИ‑психолог</b> — эмоциональная поддержка\n"
+                "<b>• XP Game</b> — система развития и мотивации\n"
+                "<b>• Лидеры</b> — топ‑5 пользователей по очкам XP\n\n"
+                "Выбери раздел:\n\n"
+            ),
+            parse_mode='HTML',
             reply_markup=markup
         )
 
@@ -158,7 +164,7 @@ def plan_add_prio(call):
         (call.from_user.id, desc, dur, prio, date.today().isoformat())
     )
     conn.commit()
-    bot.send_message(call.from_user.id, "✅ Задача сохранена!")
+    bot.send_message(call.from_user.id, "Задача успешно добавлена в план ✅")
     pending_tasks.pop(call.from_user.id, None)
     go_scheduling(call)
 
@@ -249,7 +255,8 @@ def show_tasks(call, for_date: date):
         "WHERE tg_id = ? AND task_date = ?",
         (call.from_user.id, for_date.isoformat())
     )
-    if not cursor.fetchall():
+    rows = cursor.fetchall()
+    if not rows:
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("⬅ Назад", callback_data="back"))
         bot.send_message(
@@ -258,16 +265,13 @@ def show_tasks(call, for_date: date):
             reply_markup=kb
         )
         return
-    text = f"📋 Задачи на {for_date.strftime('%d.%m.%Y')}:\n\n"
-    for tid, desc, dur, prio, done in cursor.fetchall():
-        status = "✅" if done else "❌"
-        text += f"{status} [{tid}] {desc} — {dur} мин, {prio}\n"
+    text = f"Ваши задачи на {for_date.strftime('%d.%m.%Y')} 📅:\n\n"
     kb = types.InlineKeyboardMarkup(row_width=1)
-    for tid, desc, dur, prio, done in cursor.fetchall():
+    for tid, desc, dur, prio, done in rows:
+        status = "✅" if done else "❌"
+        text += f"{status} [{tid}] {desc} — {dur} мин, {prio}\n"
         if not done:
-            kb.add(types.InlineKeyboardButton(
-                f"✔️ Завершить #{tid}", callback_data=f"complete_{tid}"
-            ))
+            kb.add(types.InlineKeyboardButton(f"✔️ Завершить #{tid}", callback_data=f"complete_{tid}"))
     kb.add(types.InlineKeyboardButton("⬅ Назад", callback_data="back"))
     bot.send_message(call.message.chat.id, text, reply_markup=kb)
 
@@ -320,12 +324,13 @@ def go_habits(call_or_msg):
 def handle_mark_habit(call):
     bot.delete_message(call.message.chat.id, call.message.message_id)
     cursor.execute("SELECT id, name FROM habits WHERE tg_id = ?", (call.from_user.id,))
-    if not cursor.fetchall():
+    rows = cursor.fetchall()
+    if not rows:
         bot.answer_callback_query(call.id, "У вас нет привычек")
         return show_habits_menu(call)
     kb = types.InlineKeyboardMarkup(row_width=1)
     today_str = date.today().isoformat()
-    for hid, name in cursor.fetchall():
+    for hid, name in rows:
         cursor.execute(
             "SELECT done FROM habit_log WHERE habit_id = ? AND log_date = ?",
             (hid, today_str)
@@ -479,7 +484,12 @@ def go_scheduling(call):
         types.InlineKeyboardButton("🗒 Привычки", callback_data="habits"),
         types.InlineKeyboardButton("⬅ Назад", callback_data="back")
     )
-    bot.send_message(call.message.chat.id, "Раздел «Планирование». Выберите действие:", reply_markup=kb)
+    bot.send_message(
+        call.message.chat.id,
+        "🗓 <b>Планирование</b> — добавляй задачи, строй расписание и следи за привычками.",
+        reply_markup=kb,
+        parse_mode='HTML'
+    )
 
 
 def plan_add_start(call):
@@ -514,7 +524,7 @@ def plan_add_duration(message):
         types.InlineKeyboardButton("Низкий", callback_data="prio_low"),
         types.InlineKeyboardButton("Назад", callback_data="back")
     )
-    bot.send_message(message.chat.id, "🔺 Выберите приоритет:", reply_markup=kb)
+    bot.send_message(message.chat.id, "Выберите приоритет этой задачи:", reply_markup=kb)
 
 
 def plan_list_menu(call):
@@ -524,7 +534,7 @@ def plan_list_menu(call):
         types.InlineKeyboardButton("📅 Завтра", callback_data="list_tomorrow"),
         types.InlineKeyboardButton("Назад", callback_data="back")
     )
-    bot.send_message(call.message.chat.id, "Выберите дату задач:", reply_markup=kb)
+    bot.send_message(call.message.chat.id, "Выберите день, задачи которого хотите посмотреть:", reply_markup=kb)
 
 
 def plan_generate_start(call):
@@ -545,7 +555,8 @@ def plan_generate(call, fetch_date: date, target_date: date):
         (call.from_user.id, fetch_date.isoformat())
     )
     if not cursor.fetchall():
-        bot.send_message(call.message.chat.id, f"На {target_date.strftime('%d.%m.%Y')} нет задач для генерации.")
+        bot.send_message(call.message.chat.id,
+                         f"На {target_date.strftime('%d.%m.%Y')} нет активных задач для составления плана.")
         return go_scheduling(call)
     prompt = f"Сделай ежедневный план‑расписание на {target_date.strftime('%d.%m.%Y')} для задач:\n"
     for desc, dur, prio in cursor.fetchall():
@@ -572,11 +583,14 @@ def plan_generate(call, fetch_date: date, target_date: date):
 
 def show_habits_menu(call):
     cursor.execute("SELECT id, name FROM habits WHERE tg_id = ?", (call.message.chat.id,))
+    rows = cursor.fetchall()
     text = "🗒 Твои привычки:\n\n"
-    for hid, name in cursor.fetchall():
-        text += f"{hid}. {name}\n"
-    if not cursor.fetchall():
+    if rows:
+        for hid, name in rows:
+            text += f"{hid}. {name}\n"
+    else:
         text += "_Пока нет ни одной привычки._\n"
+
     kb = types.InlineKeyboardMarkup(row_width=1)
     kb.add(
         types.InlineKeyboardButton("➕ Добавить привычку", callback_data="add_habit"),
@@ -702,14 +716,17 @@ def handle_health_result(message, sleep, fatigue):
 def go_lessons(call):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     kb.add(types.KeyboardButton('Закончить'))
-    with open('photo_homework.jpg', 'rb') as photo:
-        msg = bot.send_photo(
-            chat_id=call.message.chat.id,
-            photo=photo,
-            caption="📝 Введи свой вопрос по домашнему заданию, и я постараюсь помочь.",
-            reply_markup=kb
-        )
-    bot.register_next_step_handler(msg, handle_homework_chat)
+    caption = (
+        "📝 <b>Помощь с ДЗ</b> — бот не делает за тебя домашку, а лишь помогает с возникшими вопросами.\n\n"
+        "Опиши свою проблему или участок задания, и я подскажу, как с этим справиться."
+    )
+    bot.send_message(
+        chat_id=call.message.chat.id,
+        text=caption,
+        parse_mode='HTML',
+        reply_markup=kb
+    )
+    bot.register_next_step_handler_by_chat_id(call.message.chat.id, handle_homework_chat)
 
 
 def handle_homework_chat(message):
@@ -734,14 +751,18 @@ def handle_homework_chat(message):
 def go_psychologist(call):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     kb.add(types.KeyboardButton('Закончить'))
-    with open('photo_psychologist.jpg', 'rb') as photo:
-        msg = bot.send_photo(
-            chat_id=call.message.chat.id,
-            photo=photo,
-            caption="🧠 Расскажи о своей личной проблеме. Я помогу советом.",
-            reply_markup=kb
-        )
-    bot.register_next_step_handler(msg, handle_psychologist_chat)
+    caption = (
+        "🧠 **ИИ‑психолог** — здесь ты получаешь эмоциональную поддержку и советы по личным вопросам.\n\n"
+        "Если нужна помощь в экстренной ситуации, обратись к специалисту.\n\n"
+        "Расскажи, что тебя беспокоит, — я постараюсь помочь."
+    )
+    bot.send_message(
+        chat_id=call.message.chat.id,
+        text=caption,
+        parse_mode='Markdown',
+        reply_markup=kb
+    )
+    bot.register_next_step_handler_by_chat_id(call.message.chat.id, handle_psychologist_chat)
 
 
 def handle_psychologist_chat(message):
@@ -833,12 +854,13 @@ def go_xp_game(call):
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton('Назад', callback_data='back'))
     text = (
-        f"🎮 *XP Game*\n\n"
-        f"🏷 Уровень: *{level}*\n"
-        f"⭐ XP: *{xp}*\n"
-        f"🔥 Стрик: *{streak}* дней\n"
-        f"🎖 Статус: *{badge}*\n\n"
-        f"💡 Мотивация дня:\n_{motivation}_"
+        "🎮 XP Game — мотивационная игра, где ты зарабатываешь очки за активности, держишь серию и повышаешь свой ранг.\n\n"
+        f"📊 *Твоя прокачка:*\n\n"
+        f"• Уровень: *{level}*\n"
+        f"• XP: *{xp}*\n"
+        f"• Серия: *{streak} дней*\n"
+        f"• Ранг: *{badge}*\n\n"
+        f"• Мотивация дня:\n_{motivation}_"
     )
     bot.send_message(
         chat_id=call.message.chat.id,
@@ -884,7 +906,7 @@ def handle_sleep_prefs(message):
 
 
 def send_sleep_reminder(tg_id):
-    bot.send_message(tg_id, "⌛️ Через 15 минут пора готовиться ко сну!")
+    bot.send_message(tg_id, "⌛ Скоро пора спать! Подготовься — осталось 15 минут.")
 
 
 def schedule_all_sleep_reminders():
