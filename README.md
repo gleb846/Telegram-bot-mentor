@@ -84,16 +84,31 @@
 ## 5. Инструкции по установке и запуску
 
 ```bash
+# 1. Клонируем репозиторий и переходим в него
 git clone https://github.com/gleb846/Telegram-bot-mentor.git
-cd ваш_репозиторий
-python3 -m venv .venv && source .venv/bin/activate    # Linux/macOS
-# или
-python -m venv .venv && .\.venv\Scripts\activate.bat  # Windows
+cd Telegram-bot-mentor
+
+# 2. Создаём виртуальное окружение и активируем
+# Linux / macOS
+python3 -m venv .venv && source .venv/bin/activate
+
+# Windows (PowerShell)
+# python -m venv .venv; .\.venv\Scripts\Activate.ps1
+
+# Windows (CMD)
+# python -m venv .venv && .\.venv\Scripts\activate.bat
+
+# 3. Обновляем установщик и ставим зависимости
 pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
-# поместите токен в переменную окружения TELEGRAM_TOKEN
-export TELEGRAM_TOKEN="ваш_токен"    # Linux/macOS
-set TELEGRAM_TOKEN=ваш_токен         # Windows
+
+# 4. Экспортируем токен (одна команда подходит для обеих оболочек в *nix)
+export TELEGRAM_TOKEN="ваш_токен" 
+
+# — для Windows PowerShell:
+#  $Env:TELEGRAM_TOKEN = "ваш_токен"
+
+# 5. Запускаем бота
 python main.py
 ```
 
