@@ -50,7 +50,12 @@
 
 ## 3. Архитектура и структура проекта
 
-*(будет дополнен чуть позже)*
+    /project-root
+    ├── main.py            # Основной файл с логикой бота
+    ├── bot_data.db        # SQLite база данных
+    ├── start_photo.jpg    # Изображение для /start
+    ├── requirements.txt   # Зависимости
+    └── README.md          # Документация
 
 ---
 
@@ -76,4 +81,26 @@
 ---
 
 
+## 5. Инструкции по установке и запуску
 
+```bash
+git clone https://github.com/gleb846/Telegram-bot-mentor.git
+cd ваш_репозиторий
+python3 -m venv .venv && source .venv/bin/activate    # Linux/macOS
+# или
+python -m venv .venv && .\.venv\Scripts\activate.bat  # Windows
+pip install --upgrade pip setuptools wheel
+pip install -r requirements.txt
+# поместите токен в переменную окружения TELEGRAM_TOKEN
+export TELEGRAM_TOKEN="ваш_токен"    # Linux/macOS
+set TELEGRAM_TOKEN=ваш_токен         # Windows
+python main.py
+```
+
+## 6. Пример работы бота
+
+<p>
+  <img src="https://github.com/gleb846/Telegram-bot-mentor/blob/main/photo_1.jpg" alt="Главное меню" width="325" />
+  <img src="https://github.com/gleb846/Telegram-bot-mentor/blob/main/photo_2.jpg" alt="Генерация плана" width="325" />
+  <img src="https://github.com/gleb846/Telegram-bot-mentor/blob/main/photo_3.jpg" alt="Health‑чек" width="325" />
+</p>
